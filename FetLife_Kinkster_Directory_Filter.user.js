@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FetLife Kinkster Directory Filter
 // @namespace    https://github.com/ShavedW00kie/
-// @version      1.0.2
+// @version      1.0.3
 // @author       ShavedW00kie
 // @homepageURL  https://github.com/ShavedW00kie
 // @description  Filter kinkster profile directories by gender/sex and location keywords on FetLife.
@@ -18,7 +18,6 @@
     'use strict';
 
     const STORAGE_KEY = 'tbcc_kf_settings_v1';
-    const HIDDEN_ATTR = 'data-kf-hidden';
     const PANEL_ID = 'tbcc-kf-panel';
     const FAB_ID = 'tbcc-kf-fab';
 
@@ -57,7 +56,6 @@
     function ensureStyles() {
         if (stylesInjected) return;
         GM_addStyle(`
-            html body [${HIDDEN_ATTR}="1"] { display: none !important; }
             #${PANEL_ID} {
                 position: fixed; z-index: 1000000; right: 16px; bottom: 110px;
                 width: min(400px, calc(100vw - 24px)); max-height: min(75vh, 600px);
@@ -91,15 +89,28 @@
         stylesInjected = true;
     }
 
+    function normalizeSex(rawSex) {
+        let s = rawSex.toUpperCase();
+        if (s === 'MAN' || s === 'MALE' || s === 'M') return 'M';
+        if (s === 'WOMAN' || s === 'FEMALE' || s === 'F') return 'F';
+        if (s === 'TRANS MAN') return 'TM';
+        if (s === 'TRANS WOMAN') return 'TW';
+        if (s === 'TRANSGENDER') return 'TG';
+        if (s === 'NON-BINARY' || s === 'NONBINARY' || s === 'ENBY') return 'NB';
+        if (s === 'CROSSDRESSER') return 'CD/TV';
+        if (s === 'GENDER FLUID' || s === 'GENDERFLUID') return 'GF';
+        if (s === 'GENDER QUEER' || s === 'GENDERQUEER') return 'GQ';
+        if (s === 'INTERSEX') return 'IS';
+        return s;
+    }
+
     function parseSexFromText(text) {
-        // Broadened regex to handle / and raw spaces without accidentally attaching to surrounding text.
-        const match = text.match(/(?:^|\b|\s)(1[89]|[2-9]\d)\s*(?:[·.,|/ -]\s*)?([A-Za-z/]{1,7})(?:\b|$|\s)/);
+        // Broadened to catch full words like "Female" up to 12 characters
+        const match = text.match(/\b(1[89]|[2-9]\d)\s*(?:[·.,|/ -]\s*)?([A-Za-z/\-]{1,12})\b/);
         if (match) {
-            let sex = match[2].toUpperCase();
-            if (sex === 'MAN') sex = 'M';
-            if (sex === 'WOMAN') sex = 'F';
-            if (sex.length <= 5 || GENDERS.some(g => g.id === sex)) {
-                return sex;
+            let normalized = normalizeSex(match[2]);
+            if (GENDERS.some(g => g.id === normalized)) {
+                return normalized;
             }
         }
         return null;
@@ -107,50 +118,48 @@
 
     function getCards() {
         const cards = new Set();
-        const regex = /(?:^|\b|\s)(1[89]|[2-9]\d)\s*(?:[·.,|/ -]\s*)?([A-Za-z/]{1,7})(?:\b|$|\s)/;
+        const regex = /\b(1[89]|[2-9]\d)\s*(?:[·.,|/ -]\s*)?([A-Za-z/\-]{1,12})\b/;
         
         document.querySelectorAll('a[href*="/users/"]').forEach(a => {
             try {
                 const url = new URL(a.href, window.location.origin);
-                // Ensure it's a root profile link.
-                if (/^\/users\/[a-zA-Z0-9_.-]+$/.test(url.pathname)) {
-                    let p = a.parentElement;
-                    let validCard = null;
+                if (!/^\/users\/[a-zA-Z0-9_.-]+$/.test(url.pathname)) return;
+                
+                let p = a.parentElement;
+                let validCard = null;
+                let steps = 0;
+                
+                // Hard depth limit prevents leeching up to the body/main container
+                while (p && p !== document.body && steps < 8) {
+                    steps++;
                     
-                    while (p && p !== document.body) {
-                        // Prevent DOM Leeching: Stop traversing if the container holds multiple different users (e.g. a grid)
-                        const userLinks = p.querySelectorAll('a[href*="/users/"]');
-                        const uniqueUsers = new Set();
-                        userLinks.forEach(link => {
-                            try {
-                                const lUrl = new URL(link.href, window.location.origin);
-                                const m = lUrl.pathname.match(/^\/users\/([a-zA-Z0-9_.-]+)$/);
-                                if (m) uniqueUsers.add(m[1]);
-                            } catch (e) {}
-                        });
-                        
-                        if (uniqueUsers.size > 1) {
-                            break; // We've hit a multi-user container; stop going up.
-                        }
+                    if (p.tagName === 'MAIN' || p.tagName === 'HEADER' || p.id === 'main-content') break;
 
-                        const text = p.innerText || p.textContent || '';
-                        if (text.length > 800) break; // Safety ceiling
-
-                        if (regex.test(text)) {
-                            validCard = p; // Keep updating to find the largest single-user container that matches
-                        }
-                        
-                        p = p.parentElement;
+                    const text = p.innerText || p.textContent || '';
+                    if (text.length > 800) break; // Safety ceiling, likely hit the grid wrapper
+                    
+                    if (regex.test(text)) {
+                        validCard = p;
+                        break; // Stop going up immediately when we find the demographic text
                     }
                     
-                    if (validCard) {
-                        cards.add(validCard);
+                    p = p.parentElement;
+                }
+                
+                if (validCard) {
+                    // Try to snap to the logical FetLife card wrapper if possible
+                    let wrapper = validCard.closest('article') || 
+                                  validCard.closest('.relative') || 
+                                  validCard;
+                    
+                    if ((wrapper.innerText || '').length < 1000) {
+                        cards.add(wrapper);
                     }
                 }
             } catch (e) {}
         });
         
-        // Deduplicate: If an avatar link and a name link found the same card, keep only one.
+        // Deduplicate overlapping wrappers
         const cardArray = Array.from(cards);
         return cardArray.filter(c => !cardArray.some(other => other !== c && other.contains(c)));
     }
@@ -179,10 +188,13 @@
                 }
             }
             
+            // Replaced CSS attribute injection with absolute inline styling to bypass Tailwind overrides
             if (shouldHide) {
-                card.setAttribute(HIDDEN_ATTR, '1');
+                card.style.display = 'none';
+                card.setAttribute('data-kf-hidden', '1');
             } else {
-                card.removeAttribute(HIDDEN_ATTR);
+                card.style.display = '';
+                card.removeAttribute('data-kf-hidden');
             }
         });
     }
@@ -277,7 +289,6 @@
         for (let m of mutations) {
             if (m.addedNodes.length > 0) {
                 for (let n of m.addedNodes) {
-                    // Ignore DOM changes injected by this exact script.
                     if (n.nodeType === 1 && n.id !== PANEL_ID && n.id !== FAB_ID) {
                         shouldApply = true;
                         break;
