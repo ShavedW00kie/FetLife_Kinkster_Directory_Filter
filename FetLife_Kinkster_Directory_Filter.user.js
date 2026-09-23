@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FetLife Kinkster Directory Filter
 // @namespace    https://github.com/ShavedW00kie/
-// @version      1.0.1
+// @version      1.0.2
 // @author       ShavedW00kie
 // @homepageURL  https://github.com/ShavedW00kie
 // @description  Filter kinkster profile directories by gender/sex and location keywords on FetLife.
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
+// @run-at       document-idle
 // @license      BSD-3-Clause
 // ==/UserScript==
 
@@ -21,7 +22,6 @@
     const PANEL_ID = 'tbcc-kf-panel';
     const FAB_ID = 'tbcc-kf-fab';
 
-    // FIX 1: All IDs normalized to strict uppercase to match regex parsing output.
     const GENDERS = [
         { id: 'M', label: 'Male (M / Man)' },
         { id: 'F', label: 'Female (F / Woman)' },
@@ -92,8 +92,8 @@
     }
 
     function parseSexFromText(text) {
-        // FIX 2: Added (?:[·.,|-]\s*)? to account for FetLife's separator dots and hyphens.
-        const match = text.match(/\b(1[89]|[2-9]\d)\s*(?:[·.,|-]\s*)?([A-Za-z/]+)(?:\b|$)/);
+        // Broadened regex to handle / and raw spaces without accidentally attaching to surrounding text.
+        const match = text.match(/(?:^|\b|\s)(1[89]|[2-9]\d)\s*(?:[·.,|/ -]\s*)?([A-Za-z/]{1,7})(?:\b|$|\s)/);
         if (match) {
             let sex = match[2].toUpperCase();
             if (sex === 'MAN') sex = 'M';
@@ -107,32 +107,50 @@
 
     function getCards() {
         const cards = new Set();
-        // FIX 4: Changed to href*="/users/" to catch both absolute and relative URLs.
+        const regex = /(?:^|\b|\s)(1[89]|[2-9]\d)\s*(?:[·.,|/ -]\s*)?([A-Za-z/]{1,7})(?:\b|$|\s)/;
+        
         document.querySelectorAll('a[href*="/users/"]').forEach(a => {
             try {
                 const url = new URL(a.href, window.location.origin);
-                if (/^\/users\/[a-zA-Z0-9_-]+$/.test(url.pathname)) {
+                // Ensure it's a root profile link.
+                if (/^\/users\/[a-zA-Z0-9_.-]+$/.test(url.pathname)) {
                     let p = a.parentElement;
-                    let card = null;
+                    let validCard = null;
+                    
                     while (p && p !== document.body) {
-                        const text = p.innerText || '';
-                        if (text.length > 400) break;
+                        // Prevent DOM Leeching: Stop traversing if the container holds multiple different users (e.g. a grid)
+                        const userLinks = p.querySelectorAll('a[href*="/users/"]');
+                        const uniqueUsers = new Set();
+                        userLinks.forEach(link => {
+                            try {
+                                const lUrl = new URL(link.href, window.location.origin);
+                                const m = lUrl.pathname.match(/^\/users\/([a-zA-Z0-9_.-]+)$/);
+                                if (m) uniqueUsers.add(m[1]);
+                            } catch (e) {}
+                        });
                         
-                        // Use updated Regex here as well to find the container
-                        if (/\b(1[89]|[2-9]\d)\s*(?:[·.,|-]\s*)?([A-Za-z/]+)(?:\b|$)/.test(text)) {
-                            card = p;
-                            break; // FIX 3: Immediately break upon finding the first (smallest) wrapper to prevent hiding full grid rows.
+                        if (uniqueUsers.size > 1) {
+                            break; // We've hit a multi-user container; stop going up.
                         }
+
+                        const text = p.innerText || p.textContent || '';
+                        if (text.length > 800) break; // Safety ceiling
+
+                        if (regex.test(text)) {
+                            validCard = p; // Keep updating to find the largest single-user container that matches
+                        }
+                        
                         p = p.parentElement;
                     }
-                    if (card) {
-                        let wrapper = card.closest('article') || card.closest('div.relative') || card;
-                        cards.add(wrapper);
+                    
+                    if (validCard) {
+                        cards.add(validCard);
                     }
                 }
             } catch (e) {}
         });
         
+        // Deduplicate: If an avatar link and a name link found the same card, keep only one.
         const cardArray = Array.from(cards);
         return cardArray.filter(c => !cardArray.some(other => other !== c && other.contains(c)));
     }
@@ -259,6 +277,7 @@
         for (let m of mutations) {
             if (m.addedNodes.length > 0) {
                 for (let n of m.addedNodes) {
+                    // Ignore DOM changes injected by this exact script.
                     if (n.nodeType === 1 && n.id !== PANEL_ID && n.id !== FAB_ID) {
                         shouldApply = true;
                         break;
@@ -269,7 +288,7 @@
         }
         if (shouldApply) {
             clearTimeout(window.kfFilterTimeout);
-            window.kfFilterTimeout = setTimeout(applyFilter, 150);
+            window.kfFilterTimeout = setTimeout(applyFilter, 250);
         }
     });
 
