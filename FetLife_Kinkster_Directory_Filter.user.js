@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FetLife Kinkster Directory Filter
 // @namespace    https://github.com/ShavedW00kie/
-// @version      1.0
+// @version      1.0.1
 // @author       ShavedW00kie
 // @homepageURL  https://github.com/ShavedW00kie
 // @description  Filter kinkster profile directories by gender/sex and location keywords on FetLife.
