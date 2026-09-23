@@ -21,13 +21,14 @@
     const PANEL_ID = 'tbcc-kf-panel';
     const FAB_ID = 'tbcc-kf-fab';
 
+    // FIX 1: All IDs normalized to strict uppercase to match regex parsing output.
     const GENDERS = [
         { id: 'M', label: 'Male (M / Man)' },
         { id: 'F', label: 'Female (F / Woman)' },
         { id: 'NB', label: 'Non-Binary (NB)' },
-        { id: 'MtF', label: 'Male to Female (MtF)' },
-        { id: 'FtM', label: 'Female to Male (FtM)' },
-        { id: 'MtO', label: 'Male to Other (MtO)' },
+        { id: 'MTF', label: 'Male to Female (MtF)' },
+        { id: 'FTM', label: 'Female to Male (FtM)' },
+        { id: 'MTO', label: 'Male to Other (MtO)' },
         { id: 'TM', label: 'Trans Man (TM)' },
         { id: 'TW', label: 'Trans Woman (TW)' },
         { id: 'TG', label: 'Transgender (TG)' },
@@ -91,7 +92,8 @@
     }
 
     function parseSexFromText(text) {
-        const match = text.match(/\b(1[89]|[2-9]\d)\s*([A-Za-z/]+)(?:\b|$)/);
+        // FIX 2: Added (?:[·.,|-]\s*)? to account for FetLife's separator dots and hyphens.
+        const match = text.match(/\b(1[89]|[2-9]\d)\s*(?:[·.,|-]\s*)?([A-Za-z/]+)(?:\b|$)/);
         if (match) {
             let sex = match[2].toUpperCase();
             if (sex === 'MAN') sex = 'M';
@@ -105,28 +107,32 @@
 
     function getCards() {
         const cards = new Set();
-        document.querySelectorAll('a[href^="/users/"]').forEach(a => {
-            const url = new URL(a.href, window.location.origin);
-            if (/^\/users\/[^\/]+$/.test(url.pathname)) {
-                let p = a.parentElement;
-                let card = null;
-                while (p && p !== document.body) {
-                    const text = p.innerText || '';
-                    if (text.length > 400) break;
-                    if (/\b(1[89]|[2-9]\d)\s*([A-Za-z/]+)(?:\b|$)/.test(text)) {
-                        card = p;
+        // FIX 4: Changed to href*="/users/" to catch both absolute and relative URLs.
+        document.querySelectorAll('a[href*="/users/"]').forEach(a => {
+            try {
+                const url = new URL(a.href, window.location.origin);
+                if (/^\/users\/[a-zA-Z0-9_-]+$/.test(url.pathname)) {
+                    let p = a.parentElement;
+                    let card = null;
+                    while (p && p !== document.body) {
+                        const text = p.innerText || '';
+                        if (text.length > 400) break;
+                        
+                        // Use updated Regex here as well to find the container
+                        if (/\b(1[89]|[2-9]\d)\s*(?:[·.,|-]\s*)?([A-Za-z/]+)(?:\b|$)/.test(text)) {
+                            card = p;
+                            break; // FIX 3: Immediately break upon finding the first (smallest) wrapper to prevent hiding full grid rows.
+                        }
+                        p = p.parentElement;
                     }
-                    p = p.parentElement;
-                }
-                if (card) {
-                    let wrapper = card.closest('article') || card.closest('div.relative');
-                    if (wrapper && wrapper.innerText.length < 400) {
-                        card = wrapper;
+                    if (card) {
+                        let wrapper = card.closest('article') || card.closest('div.relative') || card;
+                        cards.add(wrapper);
                     }
-                    cards.add(card);
                 }
-            }
+            } catch (e) {}
         });
+        
         const cardArray = Array.from(cards);
         return cardArray.filter(c => !cardArray.some(other => other !== c && other.contains(c)));
     }
