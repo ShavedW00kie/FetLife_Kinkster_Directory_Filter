@@ -105,7 +105,6 @@
     }
 
     function parseSexFromText(text) {
-        // Broadened to catch full words like "Female" up to 12 characters
         const match = text.match(/\b(1[89]|[2-9]\d)\s*(?:[·.,|/ -]\s*)?([A-Za-z/\-]{1,12})\b/);
         if (match) {
             let normalized = normalizeSex(match[2]);
@@ -129,25 +128,23 @@
                 let validCard = null;
                 let steps = 0;
                 
-                // Hard depth limit prevents leeching up to the body/main container
                 while (p && p !== document.body && steps < 8) {
                     steps++;
                     
                     if (p.tagName === 'MAIN' || p.tagName === 'HEADER' || p.id === 'main-content') break;
 
                     const text = p.innerText || p.textContent || '';
-                    if (text.length > 800) break; // Safety ceiling, likely hit the grid wrapper
+                    if (text.length > 800) break; 
                     
                     if (regex.test(text)) {
                         validCard = p;
-                        break; // Stop going up immediately when we find the demographic text
+                        break; 
                     }
                     
                     p = p.parentElement;
                 }
                 
                 if (validCard) {
-                    // Try to snap to the logical FetLife card wrapper if possible
                     let wrapper = validCard.closest('article') || 
                                   validCard.closest('.relative') || 
                                   validCard;
@@ -159,7 +156,6 @@
             } catch (e) {}
         });
         
-        // Deduplicate overlapping wrappers
         const cardArray = Array.from(cards);
         return cardArray.filter(c => !cardArray.some(other => other !== c && other.contains(c)));
     }
@@ -188,7 +184,6 @@
                 }
             }
             
-            // Replaced CSS attribute injection with absolute inline styling to bypass Tailwind overrides
             if (shouldHide) {
                 card.style.display = 'none';
                 card.setAttribute('data-kf-hidden', '1');
@@ -198,6 +193,128 @@
             }
         });
     }
+
+    // =====================================================================
+    // FETLIFE KINKSTER DIRECTORY FILTER - SETTINGS & OVERRIDE INJECTION
+    // =====================================================================
+    (function() {
+        'use strict';
+
+        const flOverrides = JSON.parse(localStorage.getItem('fl_kinkster_overrides')) || {
+            overrideAds: false,
+            overrideVerified: false,
+            overrideSupporter: false,
+            overrideEmployee: false,
+            overrideLinks: false
+        };
+
+        function injectFLOverrides(settings) {
+            const script = document.createElement('script');
+            script.textContent = `
+                (function(settings) {
+                    const applyOverrides = () => {
+                        if (window.FL && window.FL.user && window.FL.features) {
+                            if (settings.overrideAds) {
+                                window.FL.user.showAds = false;
+                            }
+                            if (settings.overrideVerified) {
+                                window.FL.user.isProfileVerified = true;
+                            }
+                            if (settings.overrideSupporter) {
+                                window.FL.user.isSupporter = true;
+                                window.FL.user.supportDaysLeft = 10;
+                            }
+                            if (settings.overrideEmployee) {
+                                window.FL.user.isEmployee = true;
+                            }
+                            if (settings.overrideLinks) {
+                                window.FL.features.restrictLinks = false;
+                            }
+                        }
+                    };
+
+                    applyOverrides();
+                    let checkInterval = setInterval(applyOverrides, 50);
+                    setTimeout(() => clearInterval(checkInterval), 3000);
+                    
+                })(${JSON.stringify(settings)});
+            `;
+            
+            (document.head || document.documentElement).appendChild(script);
+            script.remove();
+        }
+
+        injectFLOverrides(flOverrides);
+
+        window.buildOverrideSettingsUI = function(settingsContainer) {
+            const sectionWrapper = document.createElement('div');
+            sectionWrapper.id = "fl-overrides-section";
+            sectionWrapper.style.marginTop = '25px';
+            sectionWrapper.style.paddingTop = '15px';
+            sectionWrapper.style.borderTop = '1px solid #333';
+            sectionWrapper.style.display = 'flex';
+            sectionWrapper.style.flexDirection = 'column';
+            sectionWrapper.style.gap = '12px';
+
+            const sectionHeader = document.createElement('h3');
+            sectionHeader.textContent = "Data Injection Overrides";
+            sectionHeader.style.color = "#eee";
+            sectionHeader.style.margin = '0 0 10px 0';
+            sectionHeader.style.fontSize = '16px';
+            sectionWrapper.appendChild(sectionHeader);
+
+            const saveSettings = () => {
+                localStorage.setItem('fl_kinkster_overrides', JSON.stringify(flOverrides));
+            };
+
+            const createToggle = (id, labelText, settingKey) => {
+                const row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.alignItems = 'center';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = id;
+                checkbox.checked = flOverrides[settingKey];
+                checkbox.style.marginRight = '10px';
+                checkbox.style.cursor = 'pointer';
+
+                checkbox.addEventListener('change', (e) => {
+                    flOverrides[settingKey] = e.target.checked;
+                    saveSettings();
+                });
+
+                const label = document.createElement('label');
+                label.htmlFor = id;
+                label.textContent = labelText;
+                label.style.color = '#ccc';
+                label.style.cursor = 'pointer';
+                label.style.fontSize = '14px';
+                label.style.userSelect = 'none';
+
+                row.appendChild(checkbox);
+                row.appendChild(label);
+                sectionWrapper.appendChild(row);
+            };
+
+            createToggle('toggle-fl-ads', 'Disable Ads (showAds: false)', 'overrideAds');
+            createToggle('toggle-fl-verified', 'Verified Profile (isProfileVerified: true)', 'overrideVerified');
+            createToggle('toggle-fl-supporter', 'Supporter Status (isSupporter: true, 10 Days Left)', 'overrideSupporter');
+            createToggle('toggle-fl-employee', 'Employee Status (isEmployee: true)', 'overrideEmployee');
+            createToggle('toggle-fl-links', 'Unrestrict Links (restrictLinks: false)', 'overrideLinks');
+
+            const refreshNote = document.createElement('span');
+            refreshNote.textContent = "* Page refresh required after toggling overrides.";
+            refreshNote.style.color = '#888';
+            refreshNote.style.fontSize = '12px';
+            refreshNote.style.marginTop = '5px';
+            refreshNote.style.fontStyle = 'italic';
+            sectionWrapper.appendChild(refreshNote);
+
+            settingsContainer.appendChild(sectionWrapper);
+        };
+    })();
+    // =====================================================================
 
     function buildTypePanel() {
         if (document.getElementById(PANEL_ID)) return;
@@ -255,6 +372,15 @@
             applyFilter();
             panel.classList.remove('open');
         };
+
+        // Render the Override settings UI right before the save button
+        const scrollableContainer = panel.querySelector('div[style*="overflow-y: auto"]');
+        const saveBtnContainer = panel.querySelector('div[style*="justify-content: flex-end"]');
+        if (window.buildOverrideSettingsUI && scrollableContainer && saveBtnContainer) {
+            const overrideBox = document.createElement('div');
+            window.buildOverrideSettingsUI(overrideBox);
+            scrollableContainer.insertBefore(overrideBox, saveBtnContainer);
+        }
 
         const target = document.body;
         target.appendChild(panel);
